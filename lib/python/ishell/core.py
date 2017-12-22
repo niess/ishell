@@ -45,9 +45,11 @@ class IShell(cmd.Cmd, object):
     """Shell like client for managing iRods data
     """
 
-    session = None
-
     cursor = None
+
+    interactive = False
+
+    session = None
 
     class _IShellError(Exception):
         pass
@@ -133,7 +135,9 @@ class IShell(cmd.Cmd, object):
             text = text.format(*opts)
         else:
             text = str(text)
-        print self.prompt + text,
+        if self.interactive:
+            text = self.prompt + text
+        print text,
 
     def ask_for_confirmation(self, text, *args):
         self.printfmt(text, *args)
@@ -440,27 +444,56 @@ class IShell(cmd.Cmd, object):
     def do_EOF(self, line):
         return True
 
+    def onecmd(self, line):
+        """Override the default command processing in order to strip comments
+        """
+        if line.startswith("#"):
+            return
+        line = line.split("#", 1)[0]
+        for cmd in line.split(";"):
+            if super(IShell, self).onecmd(cmd):
+                return True
+
     def cmdloop(self, intro=None):
         """Override the default command loop in order to catch Ctrl+C
         """
+        # Initialise the session
+        self.initialise()
+
+        # Run the command loop
+        self.interactive = True
+
+        while True:
+            try:
+                super(IShell, self).cmdloop(intro="")
+                break
+            except KeyboardInterrupt:
+                print("^C")
+        print
+
+        # Finalise the session
+        self.finalise()
+
+    def initialise(self):
+        """Start an iRods session and initialise the environment
+        """
+        # Start the iRods session
         environment = os.path.expanduser("~/.irods/irods_environment.json")
-        with iRODSSession(irods_env_file=environment) as self.session:
-            # Fetch the environment
-            env = self.session.get_irods_env(environment)
-            self.home = env["irods_home"]
-            self.user = env["irods_user_name"]
-            self.host = env["irods_host"]
-            self.prompt_prefix = "{:}@{:}".format(self.host.split(".", 1)[0],
+        self.session = iRODSSession(irods_env_file=environment)
+
+        # Fetch the environment
+        env = self.session.get_irods_env(environment)
+        self.home = env["irods_home"]
+        self.user = env["irods_user_name"]
+        self.host = env["irods_host"]
+        self.prompt_prefix = "{:}@{:}".format(self.host.split(".", 1)[0],
                                                   self.user)
 
-            # Go to the home directory
-            self.do_cd("")
+        # Go to the home directory
+        self.do_cd("")
 
-            # Start the command loop
-            while True:
-                try:
-                    super(IShell, self).cmdloop(intro="")
-                    break
-                except KeyboardInterrupt:
-                    print("^C")
-            print
+    def finalise(self):
+        """Close the current iRods session
+        """
+        self.session.cleanup()
+        self.session = None

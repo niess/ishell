@@ -19,6 +19,7 @@
 #  You should have received a copy of the GNU Lesser General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>
 
+import getopt
 import os
 import sys
 
@@ -26,4 +27,34 @@ path = os.path.join(os.path.dirname(__file__), "..", "lib", "python")
 sys.path.append(os.path.realpath(path))
 
 from ishell import IShell
-IShell().cmdloop()
+
+
+# Parse the options
+opts, args = getopt.getopt(sys.argv[1:], "c:")
+
+
+# Process the arguments
+if opts or args:
+    # Interpreted mode
+    ish = IShell()
+    ish.initialise()
+
+    class ExitGracefully(Exception):
+        pass
+
+    try:
+        for _, cmd in opts:
+            if ish.onecmd(cmd):
+                raise ExitGracefully()
+
+        for path in args:
+            with open(path, "rb") as f:
+                for line in f:
+                    if ish.onecmd(line):
+                        raise ExitGracefully()
+    finally:
+        ish.finalise()
+
+else:
+    # Interactive mode
+    IShell().cmdloop()

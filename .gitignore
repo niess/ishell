@@ -1,7 +1,3 @@
-# Ignore Python bytecode
-*.pyc
-*.pyo
-
 # Ignore binaries
 bin
 
@@ -9,3 +5,7 @@ bin
 lib/python/*
 !lib/python/ishell
 !lib/python/prettytable.py
+
+# Ignore Python bytecode
+*.pyc
+*.pyo
