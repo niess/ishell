@@ -23,7 +23,6 @@ import fnmatch
 import getopt
 import os
 import readline
-import shlex
 import subprocess
 import sys
 
@@ -106,15 +105,10 @@ class IShell(cmd.Cmd, object):
             path = os.path.join(base.path, path)
             return os.path.normpath(path)
 
-    def parse_command(self, command, options, line, noargs=False):
+    def parse_command(self, command, options, noargs=False):
         """Parse a command line for arguments and options
         """
-        try:
-            args = shlex.split(line)
-        except ValueError as e:
-            self.println("... {:}: {:}", command, e.message)
-            raise self._IShellError()
-
+        args = self._command[1:]
         try:
             opts, args = getopt.getopt(args, options)
         except getopt.GetoptError as e:
@@ -125,6 +119,44 @@ class IShell(cmd.Cmd, object):
             self.println("... {:}: missing operand", command)
             raise self._IShellError()
         return opts, args
+
+    def parse_line(self, line):
+        """Parse a line and strip commands
+        """
+        cmds, cmd, arg = [], [], []
+        quote, commented = None, False
+        for c in line:
+            if commented:
+                if c in "\r\n":
+                    commented = False
+            elif quote is None:
+                if c in "#;\r\n":
+                    if arg:
+                        cmd.append("".join(arg))
+                        arg = []
+                    if cmd:
+                        cmds.append(cmd)
+                        cmd = []
+                    if c == "#":
+                        commented = True
+                elif c in " \t":
+                    if arg:
+                        cmd.append("".join(arg))
+                        arg = []
+                elif c in "'\"":
+                    quote = c
+                else:
+                    arg.append(c)
+            else:
+                if c == quote:
+                    quote = None
+                else:
+                    arg.append(c)
+        if arg:
+            cmd.append("".join(arg))
+        if cmd:
+            cmds.append(cmd)
+        return cmds
 
     def println(self, text, *opts):
         self.printfmt(text, *opts)
@@ -154,7 +186,7 @@ class IShell(cmd.Cmd, object):
         """
         # Parse the new path
         try:
-            opts, args = self.parse_command("cd", "", line, noargs=True)
+            opts, args = self.parse_command("cd", "", noargs=True)
         except self._IShellError:
             return
         if not args:
@@ -176,7 +208,7 @@ class IShell(cmd.Cmd, object):
         """List the objects inside the current irods collection
         """
         try:
-            opts, args = self.parse_command("ls", "", line, noargs=True)
+            opts, args = self.parse_command("ls", "", noargs=True)
         except self._IShellError:
             return
         if not args:
@@ -195,7 +227,7 @@ class IShell(cmd.Cmd, object):
 
     def do_mkdir(self, line):
         try:
-            opts, args = self.parse_command("mkdir", "", line)
+            opts, args = self.parse_command("mkdir", "")
         except self._IShellError:
             return
 
@@ -213,7 +245,7 @@ class IShell(cmd.Cmd, object):
 
     def do_rm(self, line):
         try:
-            opts, args = self.parse_command("rm", "rfT", line)
+            opts, args = self.parse_command("rm", "rfT")
         except self._IShellError:
             return
 
@@ -271,7 +303,7 @@ class IShell(cmd.Cmd, object):
 
     def do_put(self, line):
         try:
-            opts, args = self.parse_command("put", "rf", line)
+            opts, args = self.parse_command("put", "rf")
         except self._IShellError:
             return
 
@@ -338,20 +370,30 @@ class IShell(cmd.Cmd, object):
             return
 
     def complete_put(self, text, line, begidx, endidx):
+        self._command = self.parse_line(line)[0]
         try:
-            opts, args = self.parse_command("put", "rf", line[3:], noargs=True)
+            opts, args = self.parse_command("put", "rf", noargs=True)
         except self._IShellError:
             return []
-        pattern = text + "*"
         nargs = len(args)
         if (nargs < 1) or ((nargs == 1) and (line[-1] != " ")):
-            return filter(lambda s: fnmatch.fnmatch(s, pattern), os.listdir("."))
+            dirname = os.path.dirname(text)
+            if not dirname:
+                pattern = text + "*"
+                return filter(lambda s: fnmatch.fnmatch(s, pattern),
+                              os.listdir("."))
+            else:
+                pattern = os.path.basename(text) + "*"
+                completion = filter(lambda s: fnmatch.fnmatch(s, pattern),
+                                    os.listdir(dirname))
+                completion = [os.path.join(dirname, c) for c in completion]
+                return completion
         else:
             return self.completedefault(text, line, begidx, endidx)
 
     def do_get(self, line):
         try:
-            opts, args = self.parse_command("get", "rf", line)
+            opts, args = self.parse_command("get", "rf")
         except self._IShellError:
             return
 
@@ -445,13 +487,10 @@ class IShell(cmd.Cmd, object):
         return True
 
     def onecmd(self, line):
-        """Override the default command processing in order to strip comments
+        """Override the default command processing in order to strip commands
         """
-        if line.startswith("#"):
-            return
-        line = line.split("#", 1)[0]
-        for cmd in line.split(";"):
-            if super(IShell, self).onecmd(cmd):
+        for self._command in self.parse_line(line):
+            if super(IShell, self).onecmd(" ".join(self._command)):
                 return True
 
     def cmdloop(self, intro=None):
@@ -490,6 +529,7 @@ class IShell(cmd.Cmd, object):
                                                   self.user)
 
         # Go to the home directory
+        self._command = ["cd"]
         self.do_cd("")
 
     def finalise(self):
