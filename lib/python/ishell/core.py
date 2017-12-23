@@ -21,6 +21,7 @@
 import cmd
 import fnmatch
 import getopt
+import math
 import os
 import readline
 import subprocess
@@ -56,7 +57,7 @@ class IShell(cmd.Cmd, object):
     def default(self, line):
         """Handle unknown commands
         """
-        args = shlex.split(line)
+        args = line.split(None, 1)
         self.println("... unknown command `{:}`", args[0])
 
     def completedefault(self, text, line, begidx, endidx):
@@ -72,6 +73,15 @@ class IShell(cmd.Cmd, object):
         """
         if base is None:
             base = self.cursor
+        if pattern.endswith("/"):
+            pattern = pattern[:-1]
+        elif pattern.endswith(".."):
+            pattern += "/*"
+        elif pattern.endswith("."):
+            pattern = pattern[:-1] + "*"
+
+        if pattern.startswith("~"):
+            pattern = self.home + pattern[1:]
 
         try:
             dirname, basename = pattern.rsplit("/", 1)
@@ -82,23 +92,23 @@ class IShell(cmd.Cmd, object):
             try:
                 base = self.session.collections.get(path)
             except CollectionDoesNotExist:
-                return []
+                return None, base, []
             pattern = basename
 
         content = {}
         if collections:
             for c in base.subcollections:
                 if fnmatch.fnmatch(c.name, pattern):
-                    content[c.name] = c
+                    content[c.name] = (True, c)
         if data:
             for d in base.data_objects:
                 if fnmatch.fnmatch(d.name, pattern):
-                    content[d.name] = d
+                    content[d.name] = (False, d)
         return dirname, base, content
 
     def get_path(self, path, base=None):
         if path.startswith("/"):
-            return path
+            return os.path.normpath(path)
         else:
             if base is None:
                 base = self.cursor
@@ -162,13 +172,11 @@ class IShell(cmd.Cmd, object):
         self.printfmt(text, *opts)
         print
 
-    def printfmt(self, text, *opts):
-        if opts:
-            text = text.format(*opts)
+    def printfmt(self, text, *opts, **kwopts):
+        if opts or kwopts:
+            text = text.format(*opts, **kwopts)
         else:
             text = str(text)
-        if self.interactive:
-            text = self.prompt + text
         print text,
 
     def ask_for_confirmation(self, text, *args):
@@ -202,7 +210,8 @@ class IShell(cmd.Cmd, object):
         else:
             # Update the prompt
             current = irods_basename(self.cursor.path)
-            self.prompt = "[{:} {:}]$ ".format(self.prompt_prefix, current)
+            self.prompt = "[{:} \033[94m{:}\033[0m]$ ".format(
+                self.prompt_prefix, current)
 
     def do_ls(self, line):
         """List the objects inside the current irods collection
@@ -223,7 +232,72 @@ class IShell(cmd.Cmd, object):
                 self.println("")
             if len(args) > 1:
                 self.println("{:}:", pattern)
-            self.println(sorted(content.keys()))
+            if (len(content) == 1) and content.values()[0][0]:
+                pattern = content.keys()[0]
+                if pattern[-1] == "/":
+                    pattern += "*"
+                else:
+                    pattern += "/*"
+                if dirname:
+                    pattern = os.path.join(dirname, pattern)
+                _, _, content = self.get_content(pattern)
+            if len(content) == 0:
+                continue
+            keys = sorted(content.keys(), key=str.lower)
+
+            if self.interactive:
+                # Get the current terminal's width
+                p = subprocess.Popen("stty size", shell=True,
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+                out, err = p.communicate()
+                if err:
+                    screen_width = 80
+                else:
+                    screen_width = int(out.split()[-1])
+
+                # Compute the layout
+                tokens = []
+                for item in keys:
+                    n = len(item) + 2
+                    if content[item][0]:
+                        extra = 9
+                        item = "\033[94m{:}\033[0m".format(item)
+                    else:
+                        extra = 0
+                    tokens.append((n, item, extra))
+                max_width = max(tokens)[0]
+                n_columns = max(screen_width / max_width, 1)
+                n_tokens = len(tokens)
+                if n_columns >= n_tokens:
+                    n_columns = n_tokens
+                    n_rows = 1
+                else:
+                    n_rows = int(math.ceil(n_tokens / float(n_columns)))
+
+                column_width = n_columns * [0]
+                for i in xrange(n_columns):
+                    w = 0
+                    for j in xrange(n_rows):
+                        index = i * n_rows + j
+                        if index >= n_tokens:
+                            continue
+                        wj = tokens[index][0]
+                        if wj > w:
+                            w = wj
+                    column_width[i] = w - 1
+
+                # Print the result
+                for i in xrange(n_rows):
+                    for j in xrange(n_columns):
+                        index = j * n_rows + i
+                        if index >= n_tokens:
+                            continue
+                        self.printfmt("{:<{width}}", tokens[index][1],
+                                      width=column_width[j] + tokens[index][2])
+                    self.println("")
+            else:
+                self.println(os.linesep.join(keys))
 
     def do_mkdir(self, line):
         try:
@@ -476,7 +550,7 @@ class IShell(cmd.Cmd, object):
             return
 
     def do_shell(self, line):
-        args = shlex.split(line)
+        args = line.split(None, 1)
         if args and (args[0] == "cd"):
             os.chdir(args[1])
         else:
@@ -525,8 +599,8 @@ class IShell(cmd.Cmd, object):
         self.home = env["irods_home"]
         self.user = env["irods_user_name"]
         self.host = env["irods_host"]
-        self.prompt_prefix = "{:}@{:}".format(self.host.split(".", 1)[0],
-                                                  self.user)
+        self.prompt_prefix = "\033[91m{:}@{:}\033[0m".format(
+            self.host.split(".", 1)[0], self.user)
 
         # Go to the home directory
         self._command = ["cd"]
