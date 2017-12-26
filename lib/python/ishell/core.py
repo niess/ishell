@@ -18,9 +18,9 @@
 #  You should have received a copy of the GNU Lesser General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>
 
+import argparse
 import cmd
 import fnmatch
-import getopt
 import math
 import os
 import readline
@@ -51,6 +51,8 @@ class IShell(cmd.Cmd, object):
     cursor = None
 
     interactive = False
+
+    parser = {}
 
     session = None
 
@@ -97,7 +99,7 @@ class IShell(cmd.Cmd, object):
             try:
                 base = self.session.collections.get(path)
             except CollectionDoesNotExist:
-                return None, base, []
+                return None, base, {}
             pattern = basename
 
         content = {}
@@ -125,9 +127,16 @@ class IShell(cmd.Cmd, object):
         """
         args = self._command[1:]
         try:
-            opts, args = getopt.getopt(args, options)
-        except getopt.GetoptError as e:
-            self.println("... {:}: {:}", command, e.msg)
+            opts = vars(self.parser[command].parse_args(args))
+            try:
+                args = opts.pop("args")
+            except KeyError:
+                arg = opts.pop("arg")
+                if arg is None:
+                    args = []
+                else:
+                    args = [arg]
+        except SystemExit:
             raise self._IShellError()
 
         if (not noargs) and (not args):
@@ -194,10 +203,27 @@ class IShell(cmd.Cmd, object):
             return True
         return False
 
-    def do_cd(self, line):
-        """Change the current irods collection
+    def _register_cd(self):
+        if "cd" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="cd",
+                description="Change the iRODS collection to the given path. "
+                "If no path is provided then get back to HOME ({:}).".format(
+                    self.home))
+            p.add_argument("arg", metavar="path", type=str, nargs="?",
+                           help="the path to change the current collection to")
+            self.parser["cd"] = p
+
+    def help_cd(self):
+        """Print a help message for the `cd' command
         """
-        # Parse the new path
+        self._register_cd()
+        self.println(self.parser["cd"].format_help())
+
+    def do_cd(self, line):
+        """Change the current iRODS collection
+        """
+        self._register_cd()
         try:
             opts, args = self.parse_command("cd", "", noargs=True)
         except self._IShellError:
@@ -221,9 +247,27 @@ class IShell(cmd.Cmd, object):
             self.prompt = "[{:} \033[94m{:}\033[0m]$ ".format(
                 self.prompt_prefix, current)
 
-    def do_ls(self, line):
-        """List the objects inside the current irods collection
+    def _register_ls(self):
+        if "ls" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="ls",
+                description="List the objects inside the given iRODS "
+                "collection. If no path is provided then list the current "
+                "collection.")
+            p.add_argument("args", metavar="path", type=str, nargs="*",
+                           help="the path(s) to list")
+            self.parser["ls"] = p
+
+    def help_ls(self):
+        """Print a help message for the `ls' command
         """
+        self._register_ls()
+        self.println(self.parser["ls"].format_help())
+
+    def do_ls(self, line):
+        """List the objects inside the given iRODS collection
+        """
+        self._register_ls()
         try:
             opts, args = self.parse_command("ls", "", noargs=True)
         except self._IShellError:
@@ -234,6 +278,11 @@ class IShell(cmd.Cmd, object):
         for iteration, pattern in enumerate(args):
             # Find items that match the pattern
             dirname, base, content = self.get_content(pattern)
+            if len(content) == 0:
+                self.println("... ls: cannot access `{:}':"
+                             " No such data object or collection",
+                             pattern)
+                break
 
             # Print the result
             if iteration > 0:
@@ -249,12 +298,10 @@ class IShell(cmd.Cmd, object):
                 if dirname:
                     pattern = os.path.join(dirname, pattern)
                 _, _, content = self.get_content(pattern)
-            if len(content) == 0:
-                self.println("... ls: cannot access `{:}':"
-                             " No such data object or collection",
-                             pattern)
-                break
             keys = sorted(content.keys(), key=str.lower)
+
+            if len(keys) == 0:
+                continue
 
             if self.interactive:
                 # Get the current terminal's width
@@ -310,7 +357,24 @@ class IShell(cmd.Cmd, object):
             else:
                 self.println(os.linesep.join(keys))
 
+    def _register_mkdir(self):
+        if "mkdir" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="mkdir", description="Create new iRODS collection(s)")
+            p.add_argument("args", metavar="path", type=str, nargs="+",
+                           help="the path(s) of the new collection(s)")
+            self.parser["mkdir"] = p
+
+    def help_mkdir(self):
+        """Print a help message for the `mkdir' command
+        """
+        self._register_mkdir()
+        self.println(self.parser["mkdir"].format_help())
+
     def do_mkdir(self, line):
+        """Create new iRODS collection(s)
+        """
+        self._register_mkdir()
         try:
             opts, args = self.parse_command("mkdir", "")
         except self._IShellError:
@@ -325,25 +389,58 @@ class IShell(cmd.Cmd, object):
                              " Object exists", irods_basename(path))
                 break
 
+    def _register_pwd(self):
+        if "pwd" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="mkdir", description="Show the current iRODS collection.")
+            self.parser["pwd"] = p
+
+    def help_pwd(self):
+        """Print a help message for the `pwd' command
+        """
+        self._register_pwd()
+        self.println(self.parser["pwd"].format_help())
+
     def do_pwd(self, line):
+        """Show the current iRODS collection
+        """
+        self._register_pwd()
         self.println(self.cursor.path)
 
+    def _register_rm(self):
+        if "rm" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="rm", description="Remove collection(s) or data object(s) "
+                "from iRODS.")
+            p.add_argument("args", metavar="path", type=str, nargs="+",
+                           help="the path(s) of the object(s) to remove")
+            p.add_argument("-f", "--force", action="store_true",
+                           help="do not prompt before removal")
+            p.add_argument("-r", "--recursive", action="store_true",
+                           help="remove collections and their content "
+                           "recursively")
+            p.add_argument("-T", "--no-trash", action="store_true",
+                           help="do not put the erased object in the trash."
+                           " Remove them definitively")
+            self.parser["rm"] = p
+
+    def help_rm(self):
+        """Print a help message for the `rm' command
+        """
+        self._register_rm()
+        self.println(self.parser["rm"].format_help())
+
     def do_rm(self, line):
+        """Remove collection(s) or data object(s) from iRODS
+        """
+        self._register_rm()
         try:
             opts, args = self.parse_command("rm", "rfT")
         except self._IShellError:
             return
-
-        protect_collections = True
-        request_confirmation = True
-        skip_trash = False
-        for opt, param in opts:
-            if opt == "-r":
-                protect_collections = False
-            elif opt == "-f":
-                request_confirmation = False
-            elif opt == "-T":
-                skip_trash = True
+        protect_collections = not opts["recursive"]
+        request_confirmation = not opts["force"]
+        skip_trash = opts["no_trash"]
 
         for arg in args:
             # Check that the object exist and what is its type
@@ -386,6 +483,28 @@ class IShell(cmd.Cmd, object):
                              "No such data or collection", basename)
                 return
 
+    def _register_put(self):
+        if "put" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="put", description="Upload collection(s) or data "
+                "object(s) to iRODS.")
+            p.add_argument("args", metavar="path", type=str, nargs="+",
+                           help="the local path(s) of the object(s) to "
+                           "download. If more than one argument is given, the "
+                           "last one specifies the iRODS destination path")
+            p.add_argument("-f", "--force", action="store_true",
+                           help="do not prompt before overwriting")
+            p.add_argument("-r", "--recursive", action="store_true",
+                           help="upload directories and their content "
+                           "recursively")
+            self.parser["put"] = p
+
+    def help_put(self):
+        """Print a help message for the `put' command
+        """
+        self._register_put()
+        self.println(self.parser["put"].format_help())
+
     @staticmethod
     def _hrdb(x):
         """Format a number as human readable text
@@ -399,18 +518,15 @@ class IShell(cmd.Cmd, object):
         return "{:.1f} {:}".format(x / 1024**i, unit[i])
 
     def do_put(self, line):
+        """Upload collection(s) or data object(s) to iRODS
+        """
+        self._register_put()
         try:
             opts, args = self.parse_command("put", "rf")
         except self._IShellError:
             return
-
-        recursive = False
-        request_confirmation = True
-        for opt, param in opts:
-            if opt == "-r":
-                recursive = True
-            elif opt == "-f":
-                request_confirmation = False
+        recursive = opts["recursive"]
+        request_confirmation = not opts["force"]
 
         # Parse the src(s) and the destination
         if len(args) == 1:
@@ -453,7 +569,7 @@ class IShell(cmd.Cmd, object):
                     if self.session.data_objects.exists(target):
                         if request_confirmation:
                             if not self.ask_for_confirmation(
-                                    "put: overwrite data object `{:}'?", basename):
+                                "put: overwrite data object `{:}'?", basename):
                                 continue
 
                     size = os.stat(src).st_size
@@ -512,7 +628,8 @@ class IShell(cmd.Cmd, object):
             return
 
     def complete_put(self, text, line, begidx, endidx):
-        self._command = self.parse_line(line)[0]
+        self._register_put()
+        self._command = self.parse_line("put " + line)[0]
         try:
             opts, args = self.parse_command("put", "rf", noargs=True)
         except self._IShellError:
@@ -533,19 +650,38 @@ class IShell(cmd.Cmd, object):
         else:
             return self.completedefault(text, line, begidx, endidx)
 
+    def _register_get(self):
+        if "get" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="get", description="Download collection(s) or data "
+                "object(s) from iRODS.")
+            p.add_argument("args", metavar="path", type=str, nargs="+",
+                           help="the iRODS path(s) of the object(s) to "
+                           "download. If more than one argument is given, the "
+                           "last one specifies the local destination path")
+            p.add_argument("-f", "--force", action="store_true",
+                           help="do not prompt before overwriting")
+            p.add_argument("-r", "--recursive", action="store_true",
+                           help="Download collections and their content "
+                           "recursively")
+            self.parser["get"] = p
+
+    def help_get(self):
+        """Print a help message for the `get' command
+        """
+        self._register_get()
+        self.println(self.parser["get"].format_help())
+
     def do_get(self, line):
+        """Download collection(s) or data object(s) from iRODS
+        """
+        self._register_get()
         try:
             opts, args = self.parse_command("get", "rf")
         except self._IShellError:
             return
-
-        recursive = False
-        request_confirmation = True
-        for opt, param in opts:
-            if opt == "-r":
-                recursive = True
-            elif opt == "-f":
-                request_confirmation = False
+        recursive = opts["recursive"]
+        request_confirmation = not opts["force"]
 
         # Parse the src(s) and the destination
         if len(args) == 1:
@@ -659,7 +795,27 @@ class IShell(cmd.Cmd, object):
         except self._IShellError:
             return
 
+    def _register_shell(self):
+        if "shell" not in self.parser:
+            p = argparse.ArgumentParser(
+                prog="shell", description="escape with a local shell command.")
+            p.add_argument("args", metavar="command", type=str, nargs=1,
+                           help="the local command")
+            p.add_argument("args", metavar="argument", type=str, nargs="*",
+                           help="the argument(s) of the local command",
+                           action="append")
+            self.parser["shell"] = p
+
+    def help_shell(self):
+        """Print a help message for the `get' command
+        """
+        self._register_shell()
+        self.println(self.parser["shell"].format_help())
+
     def do_shell(self, line):
+        """Escape with a local shell command
+        """
+        self._register_shell()
         args = line.split(None, 1)
         if args and (args[0] == "cd"):
             os.chdir(args[1])
@@ -668,6 +824,13 @@ class IShell(cmd.Cmd, object):
             p.communicate()
 
     def do_EOF(self, line):
+        """Exit to the OS
+        """
+        return True
+
+    def do_exit(self, line):
+        """Exit to the OS
+        """
         return True
 
     def onecmd(self, line):
