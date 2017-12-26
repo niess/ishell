@@ -26,14 +26,17 @@ import os
 import readline
 import subprocess
 import sys
+import time
 
 from irods.exception import (CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME,
                              CAT_NAME_EXISTS_AS_COLLECTION,
                              CollectionDoesNotExist, DataObjectDoesNotExist,
                              USER_FILE_DOES_NOT_EXIST)
 from irods.session import iRODSSession
-from irods.data_object import irods_basename
+from irods.data_object import chunks, irods_basename
 from irods.keywords import FORCE_FLAG_KW
+from irods.manager.data_object_manager import (READ_BUFFER_SIZE,
+                                               WRITE_BUFFER_SIZE)
 
 
 # Redefine the delimiters according to file name syntax. This is required
@@ -77,8 +80,10 @@ class IShell(cmd.Cmd, object):
             pattern = pattern[:-1]
         elif pattern.endswith(".."):
             pattern += "/*"
-        elif pattern.endswith("."):
+        elif pattern.endswith("/."):
             pattern = pattern[:-1] + "*"
+        elif pattern == ".":
+            pattern = "*"
 
         if pattern.startswith("~"):
             pattern = self.home + pattern[1:]
@@ -200,7 +205,10 @@ class IShell(cmd.Cmd, object):
         if not args:
             path = self.home
         else:
-            path = self.get_path(args[0])
+            path = args[0]
+            if path.startswith("~"):
+                path = path.replace("~", self.home)
+            path = self.get_path(path)
 
         # Fetch the corresponding irods collection
         try:
@@ -242,7 +250,10 @@ class IShell(cmd.Cmd, object):
                     pattern = os.path.join(dirname, pattern)
                 _, _, content = self.get_content(pattern)
             if len(content) == 0:
-                continue
+                self.println("... ls: cannot access `{:}':"
+                             " No such data object or collection",
+                             pattern)
+                break
             keys = sorted(content.keys(), key=str.lower)
 
             if self.interactive:
@@ -375,6 +386,18 @@ class IShell(cmd.Cmd, object):
                              "No such data or collection", basename)
                 return
 
+    @staticmethod
+    def _hrdb(x):
+        """Format a number as human readable text
+        """
+        if x > 1125899906842624:
+            return "{:.1f}P".format(x / 1125899906842624.)
+        elif x == 0:
+            return "0.0B"
+        i = int(math.floor(math.log(x) / math.log(1024)))
+        unit = ("B", "kB", "MB", "GB", "TB")
+        return "{:.1f} {:}".format(x / 1024**i, unit[i])
+
     def do_put(self, line):
         try:
             opts, args = self.parse_command("put", "rf")
@@ -432,12 +455,57 @@ class IShell(cmd.Cmd, object):
                             if not self.ask_for_confirmation(
                                     "put: overwrite data object `{:}'?", basename):
                                 continue
+
+                    size = os.stat(src).st_size
+                    done = 0
+                    t0 = t1 = time.time()
+                    if self.interactive:
+                        red, blue, reset = "\033[91m", "\033[94m", "\033[0m"
+                    else:
+                        red, blue, reset = "", "", ""
+                    self.printfmt("Uploading {:}{:}{:} ...",
+                                  red, basename, reset),
+                    sys.stdout.flush()
+                    dmgr = self.session.data_objects
                     try:
-                        self.session.data_objects.put(src, dst)
+                        if dst.endswith("/"):
+                            dst = dst + basename
+                        with open(src, "rb") as f, dmgr.open(
+                                dst, "w", oprType=1) as o:
+                            for chunk in chunks(f, WRITE_BUFFER_SIZE):
+                                o.write(chunk)
+
+                                n_chunk = len(chunk)
+                                done += n_chunk
+                                if done < size:
+                                    status = int(100 * done / float(size))
+                                    t2 = time.time()
+                                    dt, t1 = t2 - t1, t2
+                                    self.printfmt(
+                                        "\rUploading {:}{:}{:} ({:2d}%), "
+                                        "size={:}{:}{:}, speed={:}{:}/s{:}",
+                                        red, basename, reset, status,
+                                        blue, self._hrdb(done), reset,
+                                        blue, self._hrdb(n_chunk / dt),
+                                        reset),
+                                    sys.stdout.flush()
+                            dt = time.time() - t0
+                            self.println(
+                                "\rUploaded {:}{:}{:} as {:} ({:}{:}{:} at "
+                                "{:}{:}/s{:})", red, basename, reset,
+                                irods_basename(dst), blue, self._hrdb(done),
+                                reset, blue, self._hrdb(done / dt), reset)
                     except CAT_NAME_EXISTS_AS_COLLECTION:
                         self.println("... put: `{:}` is an existing collection",
                                      basename)
                         raise self._IShellError()
+                    except KeyboardInterrupt:
+                        print "^C"
+                        raise self._IShellError
+                    except EOFError:
+                        print "^D"
+                        raise self._IShellError
+
         try:
             upload(srcs, dst)
         except self._IShellError:
@@ -531,7 +599,7 @@ class IShell(cmd.Cmd, object):
                 else:
                     if not self.session.data_objects.exists(src):
                         self.println("... get: cannot stat `{:}`: No such data "
-                                     "object of collection",
+                                     "object or collection",
                                      irods_basename(src))
                         raise self._IShellError()
 
@@ -540,8 +608,50 @@ class IShell(cmd.Cmd, object):
                                 "get: overwrite file `{:}'?", basename):
                             continue
 
-                    opts = {FORCE_FLAG_KW: True}
-                    self.session.data_objects.get(src, target, **opts)
+                    dmgr = self.session.data_objects
+                    obj = dmgr.get(src)
+                    size = obj.size
+                    done = 0
+                    t0 = t1 = time.time()
+                    if self.interactive:
+                        red, blue, reset = "\033[91m", "\033[94m", "\033[0m"
+                    else:
+                        red, blue, reset = "", "", ""
+                    self.printfmt("Downloading {:}{:}{:} ...",
+                                  red, irods_basename(src), reset),
+                    sys.stdout.flush()
+                    try:
+                        with open(target, "wb") as f, dmgr.open(
+                                src, "r", forceFlag=True) as o:
+                            for chunk in chunks(o, READ_BUFFER_SIZE):
+                                f.write(chunk)
+
+                                n_chunk = len(chunk)
+                                done += n_chunk
+                                if done < size:
+                                    status = int(100 * done / float(size))
+                                    t2 = time.time()
+                                    dt, t1 = t2 - t1, t2
+                                    self.printfmt(
+                                        "\rDownloading {:}{:}{:} ({:2d}%), "
+                                        "size={:}{:}{:}, speed={:}{:}/s{:}",
+                                        red, irods_basename(src), reset, status,
+                                        blue, self._hrdb(done), reset,
+                                        blue, self._hrdb(n_chunk / dt),
+                                        reset),
+                                    sys.stdout.flush()
+                            dt = time.time() - t0
+                            self.println(
+                                "\rDownloaded {:}{:}{:} as {:} ({:}{:}{:} at "
+                                "{:}{:}/s{:})", red, irods_basename(src), reset,
+                                target, blue, self._hrdb(done), reset,
+                                blue, self._hrdb(done / dt), reset)
+                    except KeyboardInterrupt:
+                        print "^C"
+                        raise self._IShellError
+                    except EOFError:
+                        print "^D"
+                        raise self._IShellError
 
         srcs = [self.get_path(src) for src in srcs]
         try:
