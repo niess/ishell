@@ -18,6 +18,8 @@
 #  You should have received a copy of the GNU Lesser General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>
 
+from __future__ import print_function
+
 import argparse
 import cmd
 import fnmatch
@@ -63,7 +65,7 @@ class IShell(cmd.Cmd, object):
         """Handle unknown commands
         """
         args = line.split(None, 1)
-        self.println("... unknown command `{:}`", args[0])
+        self.errorln("error: unknown command `{:}'", args[0])
 
     def completedefault(self, text, line, begidx, endidx):
         dirname, _, content = self.get_content(text + "*")
@@ -140,7 +142,7 @@ class IShell(cmd.Cmd, object):
             raise self._IShellError()
 
         if (not noargs) and (not args):
-            self.println("... {:}: missing operand", command)
+            self.errorln("{:}: missing operand", command)
             raise self._IShellError()
         return opts, args
 
@@ -182,16 +184,25 @@ class IShell(cmd.Cmd, object):
             cmds.append(cmd)
         return cmds
 
-    def println(self, text, *opts):
-        self.printfmt(text, *opts)
-        print
+    def println(self, text, *opts, **kwopts):
+        self.printfmt(text, *opts, **kwopts)
+        print()
 
     def printfmt(self, text, *opts, **kwopts):
         if opts or kwopts:
             text = text.format(*opts, **kwopts)
         else:
             text = str(text)
-        print text,
+        print(text, end="")
+
+    def errorln(self, text, *opts, **kwopts):
+        if opts or kwopts:
+            text = text.format(*opts, **kwopts)
+        else:
+            text = str(text)
+        if self.interactive:
+            text = "\033[93m{:}\033[0m".format(text)
+        print(text, file=sys.stderr)
 
     def ask_for_confirmation(self, text, *args):
         self.printfmt(text, *args)
@@ -240,7 +251,7 @@ class IShell(cmd.Cmd, object):
         try:
             self.cursor = self.session.collections.get(path)
         except CollectionDoesNotExist:
-            self.println("... path `{:}` does not exist", args[0])
+            self.errorln("cd: path `{:}' does not exist", args[0])
         else:
             # Update the prompt
             current = irods_basename(self.cursor.path)
@@ -279,7 +290,7 @@ class IShell(cmd.Cmd, object):
             # Find items that match the pattern
             dirname, base, content = self.get_content(pattern)
             if len(content) == 0:
-                self.println("... ls: cannot access `{:}':"
+                self.errorln("ls: cannot access `{:}':"
                              " No such data object or collection",
                              pattern)
                 break
@@ -385,7 +396,7 @@ class IShell(cmd.Cmd, object):
             try:
                 self.session.collections.create(path)
             except CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME:
-                self.println("... mkdir: cannot create collection `{:}`:"
+                self.errorln("mkdir: cannot create collection `{:}':"
                              " Object exists", irods_basename(path))
                 break
 
@@ -452,7 +463,7 @@ class IShell(cmd.Cmd, object):
                 try:
                     target = self.session.collections.get(path)
                 except CollectionDoesNotExist:
-                    self.println("... rm: cannot remove object `{:}`:"
+                    self.errorln("rm: cannot remove object `{:}':"
                                  "No such data or collection", basename)
                     return
                 else:
@@ -462,7 +473,7 @@ class IShell(cmd.Cmd, object):
 
             # Check for the recursive mode
             if protect_collections and (itype == "collection"):
-                self.println("... rm: cannot remove `{:}`: Is a collection",
+                self.errorln("rm: cannot remove `{:}': Is a collection",
                              basename)
                 return
 
@@ -479,7 +490,7 @@ class IShell(cmd.Cmd, object):
                 else:
                     self.session.data_objects.unlink(path, force=skip_trash)
             except USER_FILE_DOES_NOT_EXIST:
-                self.println("... rm: cannot remove object `{:}`:"
+                self.errorln("rm: cannot remove object `{:}':"
                              "No such data or collection", basename)
                 return
 
@@ -544,7 +555,7 @@ class IShell(cmd.Cmd, object):
             if not dst.endswith("/"):
                 dst += "/"
         elif len(srcs) > 1:
-            self.println("... put: target `{:}` is not a directory", basename)
+            self.errorln("put: target `{:}' is not a directory", basename)
             return
 
         # Upload the data
@@ -558,7 +569,7 @@ class IShell(cmd.Cmd, object):
 
                 if os.path.isdir(src):
                     if not recursive:
-                        self.println("... put: omitting collection `{:}`",
+                        self.errorln("put: omitting collection `{:}'",
                                      basename)
                         raise self._IShellError()
                     if not self.session.collections.exists(target):
@@ -612,14 +623,14 @@ class IShell(cmd.Cmd, object):
                                 irods_basename(dst), blue, self._hrdb(done),
                                 reset, blue, self._hrdb(done / dt), reset)
                     except CAT_NAME_EXISTS_AS_COLLECTION:
-                        self.println("... put: `{:}` is an existing collection",
+                        self.errorln("put: `{:}' is an existing collection",
                                      basename)
                         raise self._IShellError()
                     except KeyboardInterrupt:
-                        print "^C"
+                        print("^C")
                         raise self._IShellError
                     except EOFError:
-                        print "^D"
+                        print("^D")
                         raise self._IShellError
 
         try:
@@ -700,7 +711,7 @@ class IShell(cmd.Cmd, object):
         else:
             isdir = False
             if len(srcs) > 1:
-                self.println("... get: target `{:}' is not a directory",
+                self.errorln("get: target `{:}' is not a directory",
                              os.path.basename(dst))
                 return
 
@@ -715,7 +726,7 @@ class IShell(cmd.Cmd, object):
 
                 if self.session.collections.exists(src):
                     if not recursive:
-                        self.println("... get: omitting collection `{:}`",
+                        self.errorln("get: omitting collection `{:}'",
                                      irods_basename(src))
                         raise self._IShellError()
 
@@ -734,7 +745,7 @@ class IShell(cmd.Cmd, object):
                     download(newsrcs, target, True)
                 else:
                     if not self.session.data_objects.exists(src):
-                        self.println("... get: cannot stat `{:}`: No such data "
+                        self.errorln("get: cannot stat `{:}': No such data "
                                      "object or collection",
                                      irods_basename(src))
                         raise self._IShellError()
@@ -783,10 +794,10 @@ class IShell(cmd.Cmd, object):
                                 target, blue, self._hrdb(done), reset,
                                 blue, self._hrdb(done / dt), reset)
                     except KeyboardInterrupt:
-                        print "^C"
+                        print("^C")
                         raise self._IShellError
                     except EOFError:
-                        print "^D"
+                        print("^D")
                         raise self._IShellError
 
         srcs = [self.get_path(src) for src in srcs]
@@ -826,6 +837,7 @@ class IShell(cmd.Cmd, object):
     def do_EOF(self, line):
         """Exit to the OS
         """
+        print("")
         return True
 
     def do_exit(self, line):
