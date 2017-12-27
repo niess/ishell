@@ -18,8 +18,13 @@
 #  You should have received a copy of the GNU Lesser General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>
 
-from __future__ import print_function
+# For 2/3 compatibility
+from __future__ import absolute_import, division, print_function, with_statement
+from builtins import input
+from builtins import str
+from builtins import range
 
+# Standard library imports
 import argparse
 import cmd
 import fnmatch
@@ -30,6 +35,7 @@ import subprocess
 import sys
 import time
 
+# iRODS imports
 from irods.exception import (CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME,
                              CAT_NAME_EXISTS_AS_COLLECTION,
                              CollectionDoesNotExist, DataObjectDoesNotExist,
@@ -69,7 +75,7 @@ class IShell(cmd.Cmd, object):
 
     def completedefault(self, text, line, begidx, endidx):
         dirname, _, content = self.get_content(text + "*")
-        completion = content.keys()
+        completion = list(content.keys())
         if dirname:
             dirname = dirname.replace("/", r"/")
             completion = [r"/".join((dirname, c)) for c in completion]
@@ -207,7 +213,7 @@ class IShell(cmd.Cmd, object):
     def ask_for_confirmation(self, text, *args):
         self.printfmt(text, *args)
         try:
-            answer = raw_input()
+            answer = input()
         except EOFError:
             return False
         if answer in ("y", "Y", "yes", "Yes"):
@@ -300,8 +306,8 @@ class IShell(cmd.Cmd, object):
                 self.println("")
             if len(args) > 1:
                 self.println("{:}:", pattern)
-            if (len(content) == 1) and content.values()[0][0]:
-                pattern = content.keys()[0]
+            if (len(content) == 1) and list(content.values())[0][0]:
+                pattern = list(content.keys())[0]
                 if pattern[-1] == "/":
                     pattern += "*"
                 else:
@@ -309,7 +315,7 @@ class IShell(cmd.Cmd, object):
                 if dirname:
                     pattern = os.path.join(dirname, pattern)
                 _, _, content = self.get_content(pattern)
-            keys = sorted(content.keys(), key=str.lower)
+            keys = sorted([str(s) for s in content.keys()], key=str.lower)
 
             if len(keys) == 0:
                 continue
@@ -330,13 +336,13 @@ class IShell(cmd.Cmd, object):
                 for item in keys:
                     n = len(item) + 2
                     if content[item][0]:
-                        extra = 9
                         item = "\033[94m{:}\033[0m".format(item)
+                        extra = len(item) - n + 3
                     else:
-                        extra = 0
+                        extra = 1
                     tokens.append((n, item, extra))
                 max_width = max(tokens)[0]
-                n_columns = max(screen_width / max_width, 1)
+                n_columns = max(screen_width // max_width, 1)
                 n_tokens = len(tokens)
                 if n_columns >= n_tokens:
                     n_columns = n_tokens
@@ -345,9 +351,9 @@ class IShell(cmd.Cmd, object):
                     n_rows = int(math.ceil(n_tokens / float(n_columns)))
 
                 column_width = n_columns * [0]
-                for i in xrange(n_columns):
+                for i in range(n_columns):
                     w = 0
-                    for j in xrange(n_rows):
+                    for j in range(n_rows):
                         index = i * n_rows + j
                         if index >= n_tokens:
                             continue
@@ -357,8 +363,8 @@ class IShell(cmd.Cmd, object):
                     column_width[i] = w - 1
 
                 # Print the result
-                for i in xrange(n_rows):
-                    for j in xrange(n_columns):
+                for i in range(n_rows):
+                    for j in range(n_columns):
                         index = j * n_rows + i
                         if index >= n_tokens:
                             continue
@@ -640,7 +646,7 @@ class IShell(cmd.Cmd, object):
 
     def complete_put(self, text, line, begidx, endidx):
         self._register_put()
-        self._command = self.parse_line("put " + line)[0]
+        self._command = self.parse_line(line)[0]
         try:
             opts, args = self.parse_command("put", "rf", noargs=True)
         except self._IShellError:
@@ -650,13 +656,13 @@ class IShell(cmd.Cmd, object):
             dirname = os.path.dirname(text)
             if not dirname:
                 pattern = text + "*"
-                return filter(lambda s: fnmatch.fnmatch(s, pattern),
-                              os.listdir("."))
+                return [s for s in os.listdir(".")
+                        if fnmatch.fnmatch(s, pattern)]
             else:
                 pattern = os.path.basename(text) + "*"
-                completion = filter(lambda s: fnmatch.fnmatch(s, pattern),
-                                    os.listdir(dirname))
-                completion = [os.path.join(dirname, c) for c in completion]
+                completion = [os.path.join(dirname, s)
+                              for s in os.listdir(dirname)
+                              if fnmatch.fnmatch(s, pattern)]
                 return completion
         else:
             return self.completedefault(text, line, begidx, endidx)
@@ -740,8 +746,8 @@ class IShell(cmd.Cmd, object):
 
                     base = self.session.collections.get(src)
                     _, _, content = self.get_content("*", base=base)
-                    newsrcs = content.keys()
-                    newsrcs = [self.get_path(src, base=base) for src in newsrcs]
+                    newsrcs = [self.get_path(src, base=base)
+                               for src in content.keys()]
                     download(newsrcs, target, True)
                 else:
                     if not self.session.data_objects.exists(src):
@@ -837,7 +843,6 @@ class IShell(cmd.Cmd, object):
     def do_EOF(self, line):
         """Exit to the OS
         """
-        print("")
         return True
 
     def do_exit(self, line):
@@ -867,7 +872,7 @@ class IShell(cmd.Cmd, object):
                 break
             except KeyboardInterrupt:
                 print("^C")
-        print
+        print()
 
         # Finalise the session
         self.finalise()
