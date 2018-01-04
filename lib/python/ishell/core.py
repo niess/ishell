@@ -28,6 +28,7 @@ from builtins import range
 import argparse
 import cmd
 import fnmatch
+import glob
 import math
 import os
 import readline
@@ -53,7 +54,7 @@ readline.set_completer_delims(" \t\n")
 
 
 class IShell(cmd.Cmd, object):
-    """Shell like client for managing iRods data
+    """Shell like client for managing iRODS data
     """
 
     cursor = None
@@ -77,7 +78,10 @@ class IShell(cmd.Cmd, object):
         dirname, _, content = self.get_content(text + "*")
         completion = list(content.keys())
         if dirname:
-            dirname = dirname.replace("/", r"/")
+            if dirname == "/":
+                dirname = ""
+            else: 
+                dirname = dirname.replace("/", r"/")
             completion = [r"/".join((dirname, c)) for c in completion]
         return completion
 
@@ -87,7 +91,7 @@ class IShell(cmd.Cmd, object):
         if base is None:
             base = self.cursor
         if pattern.endswith("/"):
-            pattern = pattern[:-1]
+            pattern += "*"
         elif pattern.endswith(".."):
             pattern += "/*"
         elif pattern.endswith("/."):
@@ -103,22 +107,31 @@ class IShell(cmd.Cmd, object):
         except ValueError:
             dirname = None
         else:
+            if dirname == "":
+                dirname = "/"
             path = self.get_path(dirname, base)
             try:
                 base = self.session.collections.get(path)
             except CollectionDoesNotExist:
-                return None, base, {}
+                return None, base, None
             pattern = basename
 
-        content = {}
+        content, n = {}, 0
         if collections:
             for c in base.subcollections:
+                n += 1
+                if c.name == "":
+                    continue
                 if fnmatch.fnmatch(c.name, pattern):
                     content[c.name] = (True, c)
         if data:
             for d in base.data_objects:
+                n += 1
                 if fnmatch.fnmatch(d.name, pattern):
                     content[d.name] = (False, d)
+
+        if (n > 0) and not content:
+            content = None
         return dirname, base, content
 
     def get_path(self, path, base=None):
@@ -253,7 +266,7 @@ class IShell(cmd.Cmd, object):
                 path = path.replace("~", self.home)
             path = self.get_path(path)
 
-        # Fetch the corresponding irods collection
+        # Fetch the corresponding iRODS collection
         try:
             self.cursor = self.session.collections.get(path)
         except CollectionDoesNotExist:
@@ -289,16 +302,23 @@ class IShell(cmd.Cmd, object):
             opts, args = self.parse_command("ls", "", noargs=True)
         except self._IShellError:
             return
+        list_subcol = True
         if not args:
             args = ("*",)
 
         for iteration, pattern in enumerate(args):
             # Find items that match the pattern
+            if ((pattern == ".") or (pattern == "*") or (pattern == "/") or
+                pattern.endswith("/.") or pattern.endswith("/*")):
+                list_subcol = False
+
             dirname, base, content = self.get_content(pattern)
-            if len(content) == 0:
-                self.errorln("ls: cannot access `{:}':"
+            if content is None:
+               	self.errorln("ls: cannot access `{:}':"
                              " No such data object or collection",
                              pattern)
+               	break
+            elif len(content) == 0:
                 break
 
             # Print the result
@@ -306,7 +326,7 @@ class IShell(cmd.Cmd, object):
                 self.println("")
             if len(args) > 1:
                 self.println("{:}:", pattern)
-            if (len(content) == 1) and list(content.values())[0][0]:
+            if (len(content) == 1) and list_subcol:
                 pattern = list(content.keys())[0]
                 if pattern[-1] == "/":
                     pattern += "*"
@@ -556,6 +576,17 @@ class IShell(cmd.Cmd, object):
                 srcs = args[:-1]
             dst = self.get_path(args[-1])
 
+        # Expand the source(s)
+        expanded = []
+        for src in srcs:
+            s = glob.glob(src)
+            if not s:
+                self.errorln("cannot access {:}: No such file or directory",
+                             os.path.basename(src))
+                return
+            expanded += s
+        srcs = expanded
+
         # Check if the destination is an existing collection
         if self.session.collections.exists(dst):
             if not dst.endswith("/"):
@@ -568,6 +599,10 @@ class IShell(cmd.Cmd, object):
         def upload(srcs, dst):
             for src in srcs:
                 basename = os.path.basename(src)
+                if not os.path.exists(src):
+                    self.errorln("cannot access {:}: No such file or directory",
+                                 basename)
+                    raise self._IShellError()
                 if dst.endswith("/"):
                     target = dst + basename
                 else:
@@ -601,10 +636,8 @@ class IShell(cmd.Cmd, object):
                     sys.stdout.flush()
                     dmgr = self.session.data_objects
                     try:
-                        if dst.endswith("/"):
-                            dst = dst + basename
                         with open(src, "rb") as f, dmgr.open(
-                                dst, "w", oprType=1) as o:
+                                target, "w", oprType=1) as o:
                             for chunk in chunks(f, WRITE_BUFFER_SIZE):
                                 o.write(chunk)
 
@@ -626,7 +659,7 @@ class IShell(cmd.Cmd, object):
                             self.println(
                                 "\rUploaded {:}{:}{:} as {:} ({:}{:}{:} at "
                                 "{:}{:}/s{:})", red, basename, reset,
-                                irods_basename(dst), blue, self._hrdb(done),
+                                irods_basename(target), blue, self._hrdb(done),
                                 reset, blue, self._hrdb(done / dt), reset)
                     except CAT_NAME_EXISTS_AS_COLLECTION:
                         self.errorln("put: `{:}' is an existing collection",
@@ -878,9 +911,9 @@ class IShell(cmd.Cmd, object):
         self.finalise()
 
     def initialise(self):
-        """Start an iRods session and initialise the environment
+        """Start an iRODS session and initialise the environment
         """
-        # Start the iRods session
+        # Start the iRODS session
         environment = os.path.expanduser("~/.irods/irods_environment.json")
         self.session = iRODSSession(irods_env_file=environment)
 
@@ -897,7 +930,7 @@ class IShell(cmd.Cmd, object):
         self.do_cd("")
 
     def finalise(self):
-        """Close the current iRods session
+        """Close the current iRODS session
         """
         self.session.cleanup()
         self.session = None
