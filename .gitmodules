@@ -4,3 +4,6 @@
 [submodule "six"]
 	path = deps/six
 	url = https://github.com/benjaminp/six.git
+[submodule "future"]
+	path = deps/future
+	url = https://github.com/PythonCharmers/python-future.git

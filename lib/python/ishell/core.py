@@ -20,6 +20,16 @@
 
 # For 2/3 compatibility
 from __future__ import absolute_import, division, print_function, with_statement
+
+import os
+import sys
+try:
+    import builtins
+except ImportError:
+    path = os.path.realpath(os.path.join(os.path.dirname(__file__),
+                            "..", "..", "..", "deps", "future", "src"))
+    sys.path.append(path)
+
 from builtins import input
 from builtins import str
 from builtins import range
@@ -30,10 +40,8 @@ import cmd
 import fnmatch
 import glob
 import math
-import os
 import readline
 import subprocess
-import sys
 import time
 
 # iRODS imports
