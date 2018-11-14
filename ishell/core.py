@@ -39,6 +39,7 @@ import argparse
 import cmd
 import fnmatch
 import glob
+import io
 import math
 import readline
 import subprocess
@@ -52,8 +53,14 @@ from irods.exception import (CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME,
 from irods.session import iRODSSession
 from irods.data_object import chunks, irods_basename
 from irods.keywords import FORCE_FLAG_KW
-from irods.manager.data_object_manager import (READ_BUFFER_SIZE,
-                                               WRITE_BUFFER_SIZE)
+try:
+    from irods.manager.data_object_manager import (READ_BUFFER_SIZE,
+                                                   WRITE_BUFFER_SIZE)
+except ImportError:
+    READ_BUFFER_SIZE = 1024 * io.DEFAULT_BUFFER_SIZE
+    WRITE_BUFFER_SIZE = 1024 * io.DEFAULT_BUFFER_SIZE
+
+__all__ = ["IShell"]
 
 
 # Redefine the delimiters according to file name syntax. This is required

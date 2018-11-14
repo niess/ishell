@@ -1,9 +1,0 @@
-[submodule "python-irodsclient"]
-	path = deps/python-irodsclient
-	url = https://github.com/irods/python-irodsclient.git
-[submodule "six"]
-	path = deps/six
-	url = https://github.com/benjaminp/six.git
-[submodule "future"]
-	path = deps/future
-	url = https://github.com/PythonCharmers/python-future.git

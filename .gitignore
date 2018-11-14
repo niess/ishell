@@ -1,11 +1,8 @@
-# Ignore binaries
-bin
-
-# Ignore external modules
-lib/python/*
-!lib/python/ishell
-!lib/python/prettytable.py
-
 # Ignore Python bytecode
 *.pyc
 *.pyo
+
+# Ignore distutils data
+build
+dist
+*.egg-info
