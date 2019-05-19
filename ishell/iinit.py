@@ -32,10 +32,10 @@ def main():
         password = getpass.getpass("Enter irods password:")
         confirm = getpass.getpass("Confirm password:")
     except KeyboardInterrupt:
-        print "^C"
+        print("^C")
         sys.exit(0)
     except EOFError:
-        print "^D"
+        print("^D")
         sys.exit(0)
     if password != confirm:
         raise ValueError("confirmation does not match")
@@ -51,7 +51,7 @@ def main():
     with open(path, "wb+") as f:
         f.write(encode(password))
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    print "Irods password has been set"
+    print("Irods password has been set")
 
 
 if __name__ == "__main__":

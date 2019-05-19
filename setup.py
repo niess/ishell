@@ -7,7 +7,7 @@ import ishell
 setup(
     name = "irods-shell",
     version = ishell.__version__,
-    packages = find_packages("ishell"),
+    packages = find_packages(),
     author = "Valentin Niess",
     author_email = "valentin.niess@gmail.com",
     description = "Irods in a nutSHELL",
