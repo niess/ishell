@@ -30,7 +30,7 @@ and run `python setup.py install --user`. Note that you'll need
 
 ## Documentation
 
-The ISHELL package currently exports two executables: `iinit` and `ìshell`.
+The ISHELL package currently exports two executables: `iinit` and `ishell`.
 You might need to add their install location to your `PATH`.
 
 * The `iinit` executable is provided as a partial replacement to the standard
@@ -41,8 +41,8 @@ You might need to add their install location to your `PATH`.
 * The `ishell` executable simulates an ssh connection to your iRODS server.
   Once connected you can type `help` for a list of the supported commands.
   Alternatively it can also be run in interpreted mode, e.g.
-  `ìshell -c "cd ..; ls"` or reading from a script file, e.g.
-  `ìshell script.ish`.
+  `ishell -c "cd ..; ls"` or reading from a script file, e.g.
+  `ishell script.ish`.
 
 
 ## License
